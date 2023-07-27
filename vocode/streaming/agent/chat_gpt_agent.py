@@ -33,9 +33,14 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         openai_api_key: Optional[str] = None,
         vector_db_factory=VectorDBFactory(),
     ):
+        # Pick off the actions list before passing the config down to the base
+        # class, since handling those is not implemented.
+        agent_actions = agent_config.actions
+        agent_config.actions = None
         super().__init__(
             agent_config=agent_config, action_factory=action_factory, logger=logger
         )
+        agent_config.actions = agent_actions
         if agent_config.azure_params:
             openai.api_type = agent_config.azure_params.api_type
             openai.api_base = getenv("AZURE_OPENAI_API_BASE")
@@ -59,6 +64,8 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             self.vector_db = vector_db_factory.create_vector_db(
                 self.agent_config.vector_db_config
             )
+        # Lifted from BaseAgent
+        self.functions = self.get_functions() if self.agent_config.actions else None
 
     def get_functions(self):
         assert self.agent_config.actions
