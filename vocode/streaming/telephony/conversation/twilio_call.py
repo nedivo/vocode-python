@@ -113,6 +113,7 @@ class TwilioCall(Call[TwilioOutputDevice]):
                     conversation_id=self.id,
                     to_phone_number=self.to_phone,
                     from_phone_number=self.from_phone,
+                    twilio_sid=self.twilio_sid,
                 )
             )
             while self.active:
