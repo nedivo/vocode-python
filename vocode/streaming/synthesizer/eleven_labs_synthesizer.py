@@ -1,8 +1,9 @@
 import asyncio
 import logging
-import time
-from typing import Any, AsyncGenerator, Optional, Tuple, Union
-import wave
+import os
+
+from typing import AsyncGenerator, List, Optional, Tuple, Union
+
 import aiohttp
 from opentelemetry.trace import Span
 
@@ -10,6 +11,8 @@ from vocode import getenv
 from vocode.streaming.synthesizer.base_synthesizer import (
     BaseSynthesizer,
     SynthesisResult,
+    FILLER_AUDIO_PATH,
+    FillerAudio,
     encode_as_wav,
     tracer,
 )
@@ -25,6 +28,51 @@ from vocode.streaming.synthesizer.miniaudio_worker import MiniaudioWorker
 
 ADAM_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
 ELEVEN_LABS_BASE_URL = "https://api.elevenlabs.io/v1/"
+
+
+class ElevenLabsFillerAudioPhrase(BaseMessage):
+    stability: Optional[float] = None
+    similarity_boost: Optional[float] = None
+
+
+# Set the stability higher to get more even, unexcited feel.
+ELEVENLABS_FILLER_PHRASES = [
+    ElevenLabsFillerAudioPhrase(
+        text="Um—",
+        stability=0.8,
+        similarity_boost=0.1,  # Em-dash
+    ),
+    ElevenLabsFillerAudioPhrase(
+        text="Uh—",
+        stability=0.8,
+        similarity_boost=0.1,  # Em-dash
+    ),
+    ElevenLabsFillerAudioPhrase(
+        text="Uh-huh—",
+        stability=0.8,
+        similarity_boost=0.1,  # Em-dash
+    ),
+    ElevenLabsFillerAudioPhrase(
+        text="Mm-hmm-",
+        stability=0.8,
+        similarity_boost=0.1,  # En-dash
+    ),
+    ElevenLabsFillerAudioPhrase(
+        text="Hmm—",
+        stability=0.8,
+        similarity_boost=0.1,  # Em-dash
+    ),
+    ElevenLabsFillerAudioPhrase(
+        text="Hmm-",
+        stability=0.8,
+        similarity_boost=0.1,  # En-dash
+    ),
+    ElevenLabsFillerAudioPhrase(text="Okay...", stability=0.8, similarity_boost=0.1),
+    ElevenLabsFillerAudioPhrase(text="Right...", stability=0.8, similarity_boost=0.1),
+    ElevenLabsFillerAudioPhrase(
+        text="Let me see...", stability=0.8, similarity_boost=0.1
+    ),
+]
 
 
 class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
@@ -48,6 +96,7 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         self.optimize_streaming_latency = synthesizer_config.optimize_streaming_latency
         self.words_per_minute = 150
         self.experimental_streaming = synthesizer_config.experimental_streaming
+        self.logger = logger or logging.getLogger(__name__)
 
     async def experimental_streaming_output_generator(
         self,
@@ -96,17 +145,76 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         finally:
             miniaudio_worker.terminate()
 
-    async def create_speech(
-        self,
-        message: BaseMessage,
-        chunk_size: int,
-        bot_sentiment: Optional[BotSentiment] = None,
-    ) -> SynthesisResult:
-        voice = self.elevenlabs.Voice(voice_id=self.voice_id)
-        if self.stability is not None and self.similarity_boost is not None:
-            voice.settings = self.elevenlabs.VoiceSettings(
-                stability=self.stability, similarity_boost=self.similarity_boost
+    async def get_phrase_filler_audios(self) -> List[FillerAudio]:
+        orig_experimental_streaming = self.experimental_streaming
+        self.experimental_streaming = False
+        filler_phrase_audios = []
+        for filler_phrase in ELEVENLABS_FILLER_PHRASES:
+            cache_key = "-".join(
+                (
+                    str(filler_phrase.text),
+                    str(self.synthesizer_config.type),
+                    str(self.synthesizer_config.audio_encoding),
+                    str(self.synthesizer_config.sampling_rate),
+                    str(self.voice_id),
+                    str(self.model_id),
+                    str(filler_phrase.stability),
+                    str(filler_phrase.similarity_boost),
+                    str(self.words_per_minute),
+                )
             )
+            filler_audio_path = os.path.join(FILLER_AUDIO_PATH, f"{cache_key}.bytes")
+            if os.path.exists(filler_audio_path):
+                audio_data = open(filler_audio_path, "rb").read()
+            else:
+                self.logger.debug(f"Generating filler audio for {filler_phrase.text}")
+
+            response = await self.elevenlabs_request(
+                filler_phrase.text,
+                filler_phrase.stability,
+                filler_phrase.similarity_boost,
+            )
+
+            audio_data = await response.read()
+            wav_bytes = decode_mp3(audio_data).get_value()
+
+            with open(filler_audio_path, "wb") as f:
+                f.write(wav_bytes)
+
+            filler_synthesizer_config = self.synthesizer_config.copy_model(
+                update={
+                    "stability": filler_phrase.stability,
+                    "similarity_boost": filler_phrase.similarity_boost,
+                },
+            )
+            filler_phrase_audios.append(
+                FillerAudio(
+                    filler_phrase,
+                    wav_bytes,
+                    filler_synthesizer_config,
+                )
+            )
+        self.experimental_streaming = orig_experimental_streaming
+        return filler_phrase_audios
+
+    async def elevenlabs_request(
+        self,
+        text: str,
+        stability: Optional[float] = None,
+        similarity_boost: Optional[float] = None,
+    ):
+        voice = self.elevenlabs.Voice(voice_id=self.voice_id)
+
+        # Default to the values in the synthesizer config given to __init__
+        if stability is None and self.stability is not None:
+            stability = self.stability
+        if similarity_boost is None and self.similarity_boost is not None:
+            similarity_boost = self.similarity_boost
+        if stability is not None and similarity_boost is not None:
+            voice.settings = self.elevenlabs.VoiceSettings(
+                stability=stability, similarity_boost=similarity_boost
+            )
+
         url = ELEVEN_LABS_BASE_URL + f"text-to-speech/{self.voice_id}"
 
         if self.experimental_streaming:
@@ -116,15 +224,11 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
             url += f"?optimize_streaming_latency={self.optimize_streaming_latency}"
         headers = {"xi-api-key": self.api_key}
         body = {
-            "text": message.text,
+            "text": text,
             "voice_settings": voice.settings.dict() if voice.settings else None,
         }
         if self.model_id:
             body["model_id"] = self.model_id
-
-        create_speech_span = tracer.start_span(
-            f"synthesizer.{SynthesizerType.ELEVEN_LABS.value.split('_', 1)[-1]}.create_total",
-        )
 
         session = self.aiohttp_session
 
@@ -137,6 +241,20 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         )
         if not response.ok:
             raise Exception(f"ElevenLabs API returned {response.status} status code")
+        return response
+
+    async def create_speech(
+        self,
+        message: BaseMessage,
+        chunk_size: int,
+        bot_sentiment: Optional[BotSentiment] = None,
+    ) -> SynthesisResult:
+        create_speech_span = tracer.start_span(
+            f"synthesizer.{SynthesizerType.ELEVEN_LABS.value.split('_', 1)[-1]}.create_total",
+        )
+        response = await self.elevenlabs_request(
+            message.text, self.stability, self.similarity_boost
+        )
         if self.experimental_streaming:
             return SynthesisResult(
                 self.experimental_streaming_output_generator(
