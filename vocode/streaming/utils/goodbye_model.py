@@ -1,9 +1,9 @@
-import os
 import asyncio
+from pathlib import Path
 from typing import Optional
-import openai
+
 import numpy as np
-import requests
+import openai
 
 from vocode import getenv
 
@@ -19,14 +19,13 @@ GOODBYE_PHRASES = [
     "have a good day",
     "have a good night",
 ]
+DATA_PATH = Path(getenv("STORAGE_PATH", Path(__file__).parent))
 
 
 class GoodbyeModel:
     def __init__(
         self,
-        embeddings_cache_path=os.path.join(
-            os.path.dirname(__file__), "goodbye_embeddings"
-        ),
+        embeddings_cache_path=(DATA_PATH / "goodbye_embeddings"),
         openai_api_key: Optional[str] = None,
     ):
         openai.api_key = openai_api_key or getenv("OPENAI_API_KEY")
@@ -34,14 +33,15 @@ class GoodbyeModel:
             raise ValueError("OPENAI_API_KEY must be set in environment or passed in")
         self.embeddings_cache_path = embeddings_cache_path
         self.goodbye_embeddings: Optional[np.ndarray] = None
+        self.embeddings_cache_path.mkdir(parents=True, exist_ok=True)
 
     async def initialize_embeddings(self):
         self.goodbye_embeddings = await self.load_or_create_embeddings(
-            f"{self.embeddings_cache_path}/goodbye_embeddings.npy"
+            self.embeddings_cache_path / "goodbye_embeddings.npy"
         )
 
     async def load_or_create_embeddings(self, path):
-        if os.path.exists(path):
+        if path.exists():
             return np.load(path)
         else:
             embeddings = await self.create_embeddings()

@@ -1,28 +1,21 @@
-import os
-from typing import (
-    Any,
-    AsyncGenerator,
-    Generator,
-    Callable,
-    Generic,
-    List,
-    Optional,
-    TypeVar,
-)
-import math
 import io
+import math
 import wave
+from pathlib import Path
+from typing import Any, AsyncGenerator, Callable, Generic, List, Optional, TypeVar
+
 import aiohttp
 from nltk.tokenize import word_tokenize
 from nltk.tokenize.treebank import TreebankWordDetokenizer
 from opentelemetry import trace
 
+from vocode import getenv
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentiment
 from vocode.streaming.models.agent import FillerAudioConfig
-from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.utils import convert_wav, get_chunk_size_per_second
 from vocode.streaming.models.audio_encoding import AudioEncoding
+from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import SynthesizerConfig
+from vocode.streaming.utils import convert_wav, get_chunk_size_per_second
 
 FILLER_PHRASES = [
     BaseMessage(text="Um..."),
@@ -34,8 +27,9 @@ FILLER_PHRASES = [
     BaseMessage(text="Right..."),
     BaseMessage(text="Let me see..."),
 ]
-FILLER_AUDIO_PATH = os.path.join(os.path.dirname(__file__), "filler_audio")
-TYPING_NOISE_PATH = "%s/typing-noise.wav" % FILLER_AUDIO_PATH
+DATA_PATH = Path(getenv("STORAGE_PATH", Path(__file__).parent))
+FILLER_AUDIO_PATH = DATA_PATH / "filler_audio"
+TYPING_NOISE_PATH = FILLER_AUDIO_PATH / "typing-noise.wav"
 
 
 def encode_as_wav(chunk: bytes, synthesizer_config: SynthesizerConfig) -> bytes:
@@ -155,6 +149,7 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
         )
 
     async def set_filler_audios(self, filler_audio_config: FillerAudioConfig):
+        FILLER_AUDIO_PATH.mkdir(parents=True, exist_ok=True)
         if filler_audio_config.use_phrases:
             self.filler_audios = await self.get_phrase_filler_audios()
         elif filler_audio_config.use_typing_noise:
@@ -166,7 +161,8 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
     def ready_synthesizer(self):
         pass
 
-    # given the number of seconds the message was allowed to go until, where did we get in the message?
+    # given the number of seconds the message was allowed to go until, where
+    # did we get in the message?
     def get_message_cutoff_from_total_response_length(
         self, message: BaseMessage, seconds: int, size_of_output: int
     ) -> str:
@@ -187,8 +183,10 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
         tokens = word_tokenize(message.text)
         return TreebankWordDetokenizer().detokenize(tokens[:estimated_words_spoken])
 
-    # returns a chunk generator and a thunk that can tell you what part of the message was read given the number of seconds spoken
-    # chunk generator must return a ChunkResult, essentially a tuple (bytes of size chunk_size, flag if it is the last chunk)
+    # returns a chunk generator and a thunk that can tell you what part of the
+    #  message was read given the number of seconds spoken
+    # chunk generator must return a ChunkResult, essentially a tuple (bytes of
+    #  size chunk_size, flag if it is the last chunk)
     async def create_speech(
         self,
         message: BaseMessage,
@@ -208,11 +206,14 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
         )
 
         if self.synthesizer_config.should_encode_as_wav:
-            chunk_transform = lambda chunk: encode_as_wav(
-                chunk, self.synthesizer_config
-            )
+
+            def chunk_transform(chunk):
+                return encode_as_wav(chunk, self.synthesizer_config)
+
         else:
-            chunk_transform = lambda chunk: chunk
+
+            def chunk_transform(chunk):
+                return chunk
 
         async def chunk_generator(output_bytes):
             for i in range(0, len(output_bytes), chunk_size):
