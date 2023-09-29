@@ -1,71 +1,58 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import queue
 import random
 import threading
-from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar, cast
-import logging
 import time
 import typing
+from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar
 
 from vocode.streaming.action.worker import ActionsWorker
-
-from vocode.streaming.agent.bot_sentiment_analyser import (
-    BotSentimentAnalyser,
-)
-from vocode.streaming.agent.chat_gpt_agent import ChatGPTAgent
-from vocode.streaming.models.actions import ActionInput
-from vocode.streaming.models.events import Sender
-from vocode.streaming.models.transcript import (
-    Message,
-    Transcript,
-    TranscriptCompleteEvent,
-)
-from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.models.transcriber import EndpointingConfig, TranscriberConfig
-from vocode.streaming.output_device.base_output_device import BaseOutputDevice
-from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
-from vocode.streaming.utils.events_manager import EventsManager
-from vocode.streaming.utils.goodbye_model import GoodbyeModel
-
-from vocode.streaming.models.agent import ChatGPTAgentConfig, FillerAudioConfig
-from vocode.streaming.models.synthesizer import (
-    SentimentConfig,
-)
-from vocode.streaming.constants import (
-    TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
-    PER_CHUNK_ALLOWANCE_SECONDS,
-    ALLOWED_IDLE_TIME,
-)
 from vocode.streaming.agent.base_agent import (
     AgentInput,
     AgentResponse,
     AgentResponseFillerAudio,
     AgentResponseMessage,
     AgentResponseStop,
-    AgentResponseType,
     BaseAgent,
     TranscriptionAgentInput,
 )
+from vocode.streaming.agent.bot_sentiment_analyser import BotSentimentAnalyser
+from vocode.streaming.agent.chat_gpt_agent import ChatGPTAgent
+from vocode.streaming.constants import (
+    ALLOWED_IDLE_TIME,
+    PER_CHUNK_ALLOWANCE_SECONDS,
+    TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
+)
+from vocode.streaming.models.agent import FillerAudioConfig
+from vocode.streaming.models.events import Sender
+from vocode.streaming.models.message import BaseMessage
+from vocode.streaming.models.synthesizer import SentimentConfig
+from vocode.streaming.models.transcriber import TranscriberConfig
+from vocode.streaming.models.transcript import (
+    Message,
+    Transcript,
+    TranscriptCompleteEvent,
+)
+from vocode.streaming.output_device.base_output_device import BaseOutputDevice
 from vocode.streaming.synthesizer.base_synthesizer import (
     BaseSynthesizer,
-    SynthesisResult,
     FillerAudio,
+    SynthesisResult,
 )
+from vocode.streaming.transcriber.base_transcriber import BaseTranscriber, Transcription
 from vocode.streaming.utils import create_conversation_id, get_chunk_size_per_second
-from vocode.streaming.transcriber.base_transcriber import (
-    Transcription,
-    BaseTranscriber,
-)
+from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
+from vocode.streaming.utils.events_manager import EventsManager
 from vocode.streaming.utils.state_manager import ConversationStateManager
 from vocode.streaming.utils.worker import (
     AsyncQueueWorker,
+    InterruptibleAgentResponseEvent,
     InterruptibleAgentResponseWorker,
     InterruptibleEvent,
     InterruptibleEventFactory,
-    InterruptibleAgentResponseEvent,
-    InterruptibleWorker,
 )
 
 OutputDeviceType = TypeVar("OutputDeviceType", bound=BaseOutputDevice)
@@ -143,7 +130,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             )
             self.conversation.is_human_speaking = not transcription.is_final
             if transcription.is_final:
-                # we use getattr here to avoid the dependency cycle between VonageCall and StreamingConversation
+                # we use getattr here to avoid the dependency cycle between
+                # VonageCall and StreamingConversation
                 event = self.interruptible_event_factory.create_interruptible_event(
                     TranscriptionAgentInput(
                         transcription=transcription,
@@ -156,9 +144,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
     class FillerAudioWorker(InterruptibleAgentResponseWorker):
         """
-        - Waits for a configured number of seconds and then sends filler audio to the output
-        - Exposes wait_for_filler_audio_to_finish() which the AgentResponsesWorker waits on before
-          sending responses to the output queue
+        - Waits for a configured number of seconds and then sends filler audio
+        to the output
+        - Exposes wait_for_filler_audio_to_finish() which the
+        AgentResponsesWorker waits on before sending responses to the output
+        queue
         """
 
         def __init__(
@@ -178,7 +168,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 or not self.filler_audio_started_event.set()
             ):
                 self.conversation.logger.debug(
-                    "Not waiting for filler audio to finish since we didn't send any chunks"
+                    "Not waiting for filler audio to finish- we didn't send any chunks"
                 )
                 return
             if self.interruptible_event and isinstance(
@@ -213,7 +203,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 pass
 
     class AgentResponsesWorker(InterruptibleAgentResponseWorker):
-        """Runs Synthesizer.create_speech and sends the SynthesisResult to the output queue"""
+        """
+        Runs Synthesizer.create_speech and sends the SynthesisResult to the output queue
+        """
 
         def __init__(
             self,
@@ -337,7 +329,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
                     transcript_message=transcript_message,
                 )
-                # publish the transcript message now that it includes what was said during send_speech_to_output
+                # publish the transcript message now that it includes what was
+                # said during send_speech_to_output
                 self.conversation.transcript.maybe_publish_transcript_event_from_message(
                     message=transcript_message,
                     conversation_id=self.conversation.id,
@@ -567,9 +560,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.last_action_timestamp = time.time()
 
     def broadcast_interrupt(self):
-        """Stops all inflight events and cancels all workers that are sending output
+        """
+        Stops all inflight events and cancels all workers that are sending output
 
-        Returns true if any events were interrupted - which is used as a flag for the agent (is_interrupt)
+        Returns true if any events were interrupted -
+         which is used as a flag for the agent (is_interrupt)
         """
         num_interrupts = 0
         while True:
@@ -601,7 +596,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
     ):
         """
         - Sends the speech chunk by chunk to the output device
-          - update the transcript message as chunks come in (transcript_message is always provided for non filler audio utterances)
+        - update the transcript message as chunks come in
+           (transcript_message is always provided for non filler audio utterances)
         - If the stop_event is set, the output is stopped
         - Sets started_event when the first chunk is sent
 
@@ -671,11 +667,19 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.active = False
 
     async def terminate(self):
+        if self.active:
+            self.logger.debug("Publishing TranscriptCompleteEvent")
+            self.events_manager.publish_event(
+                TranscriptCompleteEvent(
+                    conversation_id=self.id, transcript=self.transcript
+                )
+            )
+        await asyncio.sleep(4)
+        self.logger.debug("Marking conversation terminated")
         self.mark_terminated()
+        self.logger.debug("Interrupting events")
         self.broadcast_interrupt()
-        self.events_manager.publish_event(
-            TranscriptCompleteEvent(conversation_id=self.id, transcript=self.transcript)
-        )
+        await asyncio.sleep(1.5)
         if self.check_for_idle_task:
             self.logger.debug("Terminating check_for_idle Task")
             self.check_for_idle_task.cancel()
