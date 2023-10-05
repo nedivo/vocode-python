@@ -1,10 +1,10 @@
-import os
 from typing import Optional, Type
 
 import boto3
 from botocore.exceptions import ClientError
 from pydantic import BaseModel, Field
 
+from vocode import getenv
 from vocode.streaming.action.base_action import BaseAction
 from vocode.streaming.models.actions import (
     ActionConfig,
@@ -39,13 +39,13 @@ class AmazonSESSendEmail(
 ):
     description: str = "Sends an email using Amazon SES."
     action_type: str = ActionType.AMAZON_SES_SEND_EMAIL
-    paraneters_type: Type[AmazonSESSendEmailParameters] = AmazonSESSendEmailParameters
+    parameters_type: Type[AmazonSESSendEmailParameters] = AmazonSESSendEmailParameters
     response_type: Type[AmazonSESSendEmailResponse] = AmazonSESSendEmailResponse
 
     async def run(
         self, action_input: ActionInput[AmazonSESSendEmailParameters]
     ) -> ActionOutput[AmazonSESSendEmailResponse]:
-        ses = boto3.client("ses", region_name=os.getenv("AWS_REGION"))
+        ses = boto3.client("ses", region_name=getenv("AWS_REGION"))
 
         # Create the email
         email_subject = (
@@ -56,7 +56,7 @@ class AmazonSESSendEmail(
 
         try:
             response = ses.send_email(
-                Source=os.getenv("SENDER_EMAIL"),
+                Source=getenv("SES_SENDER_EMAIL"),
                 Destination={
                     "ToAddresses": [action_input.params.recipient_email.strip()]
                 },
