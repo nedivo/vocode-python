@@ -1,23 +1,20 @@
 import asyncio
-from fastapi import WebSocket
 import base64
-from enum import Enum
 import json
 import logging
+from enum import Enum
 from typing import Optional
+
+from fastapi import WebSocket
+
 from vocode import getenv
 from vocode.streaming.agent.factory import AgentFactory
 from vocode.streaming.models.agent import AgentConfig
 from vocode.streaming.models.events import PhoneCallConnectedEvent
-
+from vocode.streaming.models.synthesizer import SynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
+from vocode.streaming.models.transcriber import TranscriberConfig
 from vocode.streaming.output_device.twilio_output_device import TwilioOutputDevice
-from vocode.streaming.models.synthesizer import (
-    SynthesizerConfig,
-)
-from vocode.streaming.models.transcriber import (
-    TranscriberConfig,
-)
 from vocode.streaming.synthesizer.factory import SynthesizerFactory
 from vocode.streaming.telephony.client.twilio_client import TwilioClient
 from vocode.streaming.telephony.config_manager.base_config_manager import (
@@ -27,6 +24,8 @@ from vocode.streaming.telephony.conversation.call import Call
 from vocode.streaming.transcriber.factory import TranscriberFactory
 from vocode.streaming.utils.events_manager import EventsManager
 from vocode.streaming.utils.state_manager import TwilioCallStateManager
+
+PICKUP_WAIT = float(getenv("PICKUP_WAIT", 0))
 
 
 class PhoneCallWebsocketAction(Enum):
@@ -136,6 +135,7 @@ class TwilioCall(Call[TwilioOutputDevice]):
                     f"Media WS: Received event '{data['event']}': {message}"
                 )
                 self.output_device.stream_sid = data["start"]["streamSid"]
+                await asyncio.sleep(PICKUP_WAIT)
                 break
 
     async def handle_ws_message(self, message) -> Optional[PhoneCallWebsocketAction]:
