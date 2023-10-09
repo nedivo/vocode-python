@@ -135,7 +135,7 @@ class TwilioCall(Call[TwilioOutputDevice]):
                     f"Media WS: Received event '{data['event']}': {message}"
                 )
                 self.output_device.stream_sid = data["start"]["streamSid"]
-                await asyncio.sleep(PICKUP_WAIT)
+                await asyncio.sleep(PICKUP_WAIT + self.twilio_config.wait_after_pickup)
                 break
 
     async def handle_ws_message(self, message) -> Optional[PhoneCallWebsocketAction]:
