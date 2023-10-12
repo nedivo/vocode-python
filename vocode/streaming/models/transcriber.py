@@ -10,6 +10,7 @@ from vocode.streaming.telephony.constants import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_SAMPLING_RATE,
 )
+
 from .audio_encoding import AudioEncoding
 from .model import TypedModel
 
@@ -109,6 +110,9 @@ class DeepgramTranscriberConfig(TranscriberConfig, type=TranscriberType.DEEPGRAM
     tier: Optional[str] = None
     version: Optional[str] = None
     keywords: Optional[list] = None
+    smart_format: Optional[bool] = True
+    profanity_filter: Optional[bool] = None  # only available in base tier models
+    extra_params: Optional[dict] = {}
 
 
 class GladiaTranscriberConfig(TranscriberConfig, type=TranscriberType.GLADIA.value):

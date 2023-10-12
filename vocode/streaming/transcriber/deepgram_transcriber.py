@@ -1,25 +1,24 @@
 import asyncio
+import audioop
 import json
 import logging
 from typing import Optional
+from urllib.parse import urlencode
+
 import websockets
 from websockets.client import WebSocketClientProtocol
-import audioop
-from urllib.parse import urlencode
-from vocode import getenv
 
+from vocode import getenv
+from vocode.streaming.models.audio_encoding import AudioEncoding
+from vocode.streaming.models.transcriber import (
+    DeepgramTranscriberConfig,
+    EndpointingType,
+)
 from vocode.streaming.transcriber.base_transcriber import (
     BaseAsyncTranscriber,
     Transcription,
     meter,
 )
-from vocode.streaming.models.transcriber import (
-    DeepgramTranscriberConfig,
-    EndpointingConfig,
-    EndpointingType,
-)
-from vocode.streaming.models.audio_encoding import AudioEncoding
-
 
 PUNCTUATION_TERMINATORS = [".", "!", "?"]
 NUM_RESTARTS = 5
@@ -59,7 +58,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self._ended = False
         self.is_ready = False
         self.logger = logger or logging.getLogger(__name__)
-        self.audio_cursor = 0.
+        self.audio_cursor = 0.0
 
     async def _run_loop(self):
         restarts = 0
@@ -103,17 +102,21 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             "channels": 1,
             "interim_results": "true",
         }
+        extra_param_names = (
+            "language",
+            "model",
+            "tier",
+            "version",
+            "keywords",
+            "smart_format",
+            "profanity_filter",
+        )
         extra_params = {}
-        if self.transcriber_config.language:
-            extra_params["language"] = self.transcriber_config.language
-        if self.transcriber_config.model:
-            extra_params["model"] = self.transcriber_config.model
-        if self.transcriber_config.tier:
-            extra_params["tier"] = self.transcriber_config.tier
-        if self.transcriber_config.version:
-            extra_params["version"] = self.transcriber_config.version
-        if self.transcriber_config.keywords:
-            extra_params["keywords"] = self.transcriber_config.keywords
+        extra_params.update(self.transcriber_config.extra_params)
+        for param_name in extra_param_names:
+            param = getattr(self.transcriber_config, param_name)
+            if param is not None:
+                extra_params[param_name] = param
         if (
             self.transcriber_config.endpointing_config
             and self.transcriber_config.endpointing_config.type
@@ -168,7 +171,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         return data["duration"]
 
     async def process(self):
-        self.audio_cursor = 0.
+        self.audio_cursor = 0.0
         extra_headers = {"Authorization": f"Token {self.api_key}"}
 
         async with websockets.connect(
@@ -203,7 +206,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                         break
                     data = json.loads(msg)
                     if (
-                        not "is_final" in data
+                        "is_final" not in data
                     ):  # means we've finished receiving transcriptions
                         break
                     cur_max_latency = self.audio_cursor - transcript_cursor
