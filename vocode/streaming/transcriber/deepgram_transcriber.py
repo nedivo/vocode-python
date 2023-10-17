@@ -116,7 +116,9 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         for param_name in extra_param_names:
             param = getattr(self.transcriber_config, param_name)
             if param is not None:
-                extra_params[param_name] = param
+                extra_params[param_name] = (
+                    param if type(param) is not bool else str(param).lower()
+                )
         if (
             self.transcriber_config.endpointing_config
             and self.transcriber_config.endpointing_config.type
