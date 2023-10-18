@@ -1,11 +1,12 @@
 import asyncio
-from typing import Any, Dict, Generic, Optional, Type, TypeVar, TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, Type, TypeVar
+
 from vocode.streaming.action.utils import exclude_keys_recursive
 from vocode.streaming.models.actions import (
     ActionConfig,
     ActionInput,
     ActionOutput,
-    ActionType,
     ParametersType,
     ResponseType,
 )
@@ -25,11 +26,13 @@ class BaseAction(Generic[ActionConfigType, ParametersType, ResponseType]):
         should_respond: bool = False,
         quiet: bool = False,
         is_interruptible: bool = True,
+        logger: Optional[logging.Logger] = None,
     ):
         self.action_config = action_config
         self.should_respond = should_respond
         self.quiet = quiet
         self.is_interruptible = is_interruptible
+        self.logger = logger or logging.getLogger()
 
     def attach_conversation_state_manager(
         self, conversation_state_manager: "ConversationStateManager"
@@ -84,7 +87,7 @@ class BaseAction(Generic[ActionConfigType, ParametersType, ResponseType]):
     def _user_message_param_info(self):
         return {
             "type": "string",
-            "description": """A message to reply to the user with BEFORE we make the function call. 
+            "description": """A message to reply to the user with BEFORE we make the function call.
                     Essentially a live response informing them that the function is about to happen.
                     Eg Let me check the weather in San Francisco CA for you """,
         }
