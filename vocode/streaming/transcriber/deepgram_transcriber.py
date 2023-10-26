@@ -59,6 +59,10 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.is_ready = False
         self.logger = logger or logging.getLogger(__name__)
         self.audio_cursor = 0.0
+        self.logger.debug(
+            "Deepgram transcriber initialized with config %s",
+            self.get_transcriber_config().json(),
+        )
 
     async def _run_loop(self):
         restarts = 0
@@ -101,6 +105,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             "sample_rate": self.transcriber_config.sampling_rate,
             "channels": 1,
             "interim_results": "true",
+            "endpointing": 300,  # milliseconds of silence
         }
         extra_param_names = (
             "language",
@@ -112,9 +117,14 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             "profanity_filter",
         )
         extra_params = {}
-        extra_params.update(self.transcriber_config.extra_params)
         for param_name in extra_param_names:
             param = getattr(self.transcriber_config, param_name)
+            if param is not None:
+                extra_params[param_name] = (
+                    param if type(param) is not bool else str(param).lower()
+                )
+        for param_name in self.transcriber_config.extra_params.keys():
+            param = self.transcriber_config.extra_params.get(param_name)
             if param is not None:
                 extra_params[param_name] = (
                     param if type(param) is not bool else str(param).lower()
@@ -126,6 +136,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         ):
             extra_params["punctuate"] = "true"
         url_params.update(extra_params)
+        self.logger.debug("wss://api.deepgram.com/v1/listen?%s", urlencode(url_params))
         return f"wss://api.deepgram.com/v1/listen?{urlencode(url_params)}"
 
     def is_speech_final(
@@ -157,6 +168,8 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 transcript
                 and deepgram_response["speech_final"]
                 and transcript.strip()[-1] in PUNCTUATION_TERMINATORS
+                and (time_silent + deepgram_response["duration"])
+                > self.transcriber_config.endpointing_config.time_cutoff_seconds
             ) or (
                 not transcript
                 and current_buffer
