@@ -176,11 +176,12 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
                 )
 
                 audio_data = await response.read()
-                wav_bytes = decode_mp3(audio_data).get_value()
+            wav_bytes = decode_mp3(audio_data).getvalue()
 
+            if not filler_audio_path.exists():
                 filler_audio_path.write_bytes(wav_bytes)
 
-            filler_synthesizer_config = self.synthesizer_config.copy_model(
+            filler_synthesizer_config = self.synthesizer_config.copy(
                 update={
                     "stability": filler_phrase.stability,
                     "similarity_boost": filler_phrase.similarity_boost,
