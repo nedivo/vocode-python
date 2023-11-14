@@ -15,7 +15,11 @@ from vocode.streaming.models.agent import FillerAudioConfig
 from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import SynthesizerConfig
-from vocode.streaming.utils import convert_wav, get_chunk_size_per_second
+from vocode.streaming.utils import (
+    convert_linear_audio,
+    convert_wav,
+    get_chunk_size_per_second,
+)
 
 FILLER_PHRASES = [
     BaseMessage(text="Um..."),
@@ -203,6 +207,50 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
             file,
             output_sample_rate=self.synthesizer_config.sampling_rate,
             output_encoding=self.synthesizer_config.audio_encoding,
+        )
+
+        if self.synthesizer_config.should_encode_as_wav:
+
+            def chunk_transform(chunk):
+                return encode_as_wav(chunk, self.synthesizer_config)
+
+        else:
+
+            def chunk_transform(chunk):
+                return chunk
+
+        async def chunk_generator(output_bytes):
+            for i in range(0, len(output_bytes), chunk_size):
+                if i + chunk_size > len(output_bytes):
+                    yield SynthesisResult.ChunkResult(
+                        chunk_transform(output_bytes[i:]), True
+                    )
+                else:
+                    yield SynthesisResult.ChunkResult(
+                        chunk_transform(output_bytes[i : i + chunk_size]), False
+                    )
+
+        return SynthesisResult(
+            chunk_generator(output_bytes),
+            lambda seconds: self.get_message_cutoff_from_total_response_length(
+                message, seconds, len(output_bytes)
+            ),
+        )
+
+    def create_synthesis_result_from_raw(
+        self,
+        raw_bytes: Any,
+        input_sample_rate: int,
+        message: BaseMessage,
+        chunk_size: int,
+    ) -> SynthesisResult:
+        # Assumes that audio samples are 16bit shorts. True for Eleven Labs
+        output_bytes = convert_linear_audio(
+            raw_bytes,
+            input_sample_rate=input_sample_rate,
+            output_sample_rate=self.synthesizer_config.sampling_rate,
+            output_encoding=self.synthesizer_config.audio_encoding,
+            output_sample_width=2,
         )
 
         if self.synthesizer_config.should_encode_as_wav:

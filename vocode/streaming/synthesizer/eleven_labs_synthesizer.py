@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from typing import AsyncGenerator, List, Optional, Tuple, Union
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 import aiohttp
 from opentelemetry.trace import Span
@@ -9,6 +10,7 @@ from vocode import getenv
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentiment
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import (
+    ElevenLabsOutputFormat,
     ElevenLabsSynthesizerConfig,
     SynthesizerType,
 )
@@ -25,6 +27,21 @@ from vocode.streaming.utils.mp3_helper import decode_mp3
 
 ADAM_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
 ELEVEN_LABS_BASE_URL = "https://api.elevenlabs.io/v1/"
+
+
+MP3_OUTPUT_FORMATS = (
+    ElevenLabsOutputFormat.MP3_64kbps,
+    ElevenLabsOutputFormat.MP3_96kbps,
+    ElevenLabsOutputFormat.MP3_128kbps,
+    ElevenLabsOutputFormat.MP3_192kbps,
+)
+SAMPLING_RATES = {
+    ElevenLabsOutputFormat.PCM_16000Hz: 16000,
+    ElevenLabsOutputFormat.PCM_22050Hz: 22050,
+    ElevenLabsOutputFormat.PCM_24000Hz: 24000,
+    ElevenLabsOutputFormat.PCM_44100Hz: 44100,
+    ElevenLabsOutputFormat.MULAW_8000Hz: 8000,
+}
 
 
 class ElevenLabsFillerAudioPhrase(BaseMessage):
@@ -93,6 +110,7 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         self.optimize_streaming_latency = synthesizer_config.optimize_streaming_latency
         self.words_per_minute = 150
         self.experimental_streaming = synthesizer_config.experimental_streaming
+        self.output_format = synthesizer_config.output_format
         self.logger = logger or logging.getLogger(__name__)
 
     async def experimental_streaming_output_generator(
@@ -215,13 +233,27 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
                 stability=stability, similarity_boost=similarity_boost
             )
 
-        url = ELEVEN_LABS_BASE_URL + f"text-to-speech/{self.voice_id}"
+        # Using urllib here to not fly as fast and loose.
+        # Since we want to change the  SplitResult named tuple, make it a dict
+        url_parts = urlsplit(
+            ELEVEN_LABS_BASE_URL + f"text-to-speech/{self.voice_id}"
+        )._asdict()
+        url_parts["query"] = parse_qs(url_parts["query"])
 
         if self.experimental_streaming:
-            url += "/stream"
+            url_parts["path"] += "/stream"
+
+        if self.output_format:
+            url_parts["query"]["output_format"] = self.output_format.value
 
         if self.optimize_streaming_latency:
-            url += f"?optimize_streaming_latency={self.optimize_streaming_latency}"
+            url_parts["query"][
+                "optimize_streaming_latency"
+            ] = self.optimize_streaming_latency
+
+        url_parts["query"] = urlencode(url_parts["query"], doseq=True)
+        url = urlunsplit(url_parts.values())
+
         headers = {"xi-api-key": self.api_key}
         body = {
             "text": text,
@@ -268,11 +300,23 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         else:
             audio_data = await response.read()
             create_speech_span.end()
+            if self.output_format not in MP3_OUTPUT_FORMATS:
+                input_sample_rate = SAMPLING_RATES[self.eleven_labs_output_format]
+                result = self.create_synthesis_result_from_raw(
+                    raw_bytes=audio_data,
+                    input_sampling_rate=input_sample_rate,
+                    message=message,
+                    chunk_size=chunk_size,
+                )
+                return
+
             convert_span = tracer.start_span(
                 f"synthesizer.{type_str}.convert",
             )
+            # Decode mp3 to wav
             output_bytes_io = decode_mp3(audio_data)
 
+            # resample (possibly convert from PCM to mulaw) and return raw data
             result = self.create_synthesis_result_from_wav(
                 file=output_bytes_io,
                 message=message,

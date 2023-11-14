@@ -1,16 +1,17 @@
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from pydantic import validator
-from vocode.streaming.models.client_backend import OutputAudioConfig
 
+from vocode.streaming.models.client_backend import OutputAudioConfig
 from vocode.streaming.output_device.base_output_device import BaseOutputDevice
 from vocode.streaming.telephony.constants import (
     DEFAULT_AUDIO_ENCODING,
     DEFAULT_SAMPLING_RATE,
 )
-from .model import BaseModel, TypedModel
+
 from .audio_encoding import AudioEncoding
+from .model import BaseModel, TypedModel
 
 
 class SynthesizerType(str, Enum):
@@ -101,6 +102,20 @@ class GoogleSynthesizerConfig(SynthesizerConfig, type=SynthesizerType.GOOGLE.val
 ELEVEN_LABS_ADAM_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
 
 
+class ElevenLabsOutputFormat(str, Enum):
+    MP3_64kbps = "mp3_44100_64"
+    MP3_96kbps = "mp3_44100_96"
+    MP3_128kbps = "mp3_44100_128"
+    MP3_192kbps = (
+        "mp3_44100_192"  # Requires you to be subscribed to Creator tier or above.
+    )
+    PCM_16000Hz = "pcm_16000"
+    PCM_22050Hz = "pcm_22050"
+    PCM_24000Hz = "pcm_24000"
+    PCM_44100Hz = "pcm_44100"  # Requires you to be subscribed to Independent Publisher tier or above.
+    MULAW_8000Hz = "ulaw_8000"
+
+
 class ElevenLabsSynthesizerConfig(
     SynthesizerConfig, type=SynthesizerType.ELEVEN_LABS.value
 ):
@@ -111,6 +126,7 @@ class ElevenLabsSynthesizerConfig(
     stability: Optional[float]
     similarity_boost: Optional[float]
     model_id: Optional[str]
+    output_format: Optional[ElevenLabsOutputFormat]
 
     @validator("voice_id")
     def set_name(cls, voice_id):
