@@ -42,6 +42,23 @@ def convert_linear_audio(
         return audioop.lin2ulaw(raw_wav, output_sample_width)
 
 
+def convert_ulaw_audio(
+    raw_wav: bytes,
+    output_sample_rate=8000,
+    output_encoding=AudioEncoding.LINEAR16,
+    output_sample_width=2,
+):
+    input_sample_rate = 8000  # Always true for mulaw
+    linear_audio = audioop.ulaw2lin(raw_wav, output_sample_width)
+    return convert_linear_audio(
+        linear_audio,
+        input_sample_rate,
+        output_sample_rate,
+        output_encoding,
+        output_sample_width,
+    )
+
+
 def convert_wav(
     file: Any,
     output_sample_rate=8000,

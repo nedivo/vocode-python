@@ -8,6 +8,7 @@ from opentelemetry.trace import Span
 
 from vocode import getenv
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentiment
+from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import (
     ElevenLabsOutputFormat,
@@ -23,6 +24,7 @@ from vocode.streaming.synthesizer.base_synthesizer import (
     tracer,
 )
 from vocode.streaming.synthesizer.miniaudio_worker import MiniaudioWorker
+from vocode.streaming.utils import convert_linear_audio, convert_ulaw_audio
 from vocode.streaming.utils.mp3_helper import decode_mp3
 
 ADAM_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
@@ -275,6 +277,69 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
             raise Exception(f"ElevenLabs API returned {response.status} status code")
         return response
 
+    def create_synthesis_result_from_raw(
+        self,
+        raw_bytes: bytes,
+        input_sample_rate: int,
+        message: BaseMessage,
+        chunk_size: int,
+    ) -> SynthesisResult:
+        output_bytes = b""
+        if (
+            self.synthesizer_config.internal_audio_format
+            == ElevenLabsOutputFormat.MULAW_8000Hz
+        ):
+            if self.synthesizer_config.audio_encoding == AudioEncoding.MULAW:
+                self.logger.debug("synthesizer output conversion: ulaw -> ulaw")
+                output_bytes = raw_bytes
+            elif self.synthesizer_config.audio_encoding == AudioEncoding.LINEAR16:
+                self.logger.debug("synthesizer output conversion: ulaw -> linear")
+                output_bytes = convert_ulaw_audio(
+                    raw_bytes,
+                    output_sample_rate=self.synthesizer_config.sampling_rate,
+                    output_encoding=self.synthesizer_config.audio_encoding,
+                    output_sample_width=2,
+                )
+        else:
+            # Assumes that audio samples are 16bit shorts.
+            # True for Eleven Labs PCM formats
+            self.logger.debug("synthesizer output conversion: linear -> linear")
+            output_bytes = convert_linear_audio(
+                raw_bytes,
+                input_sample_rate=input_sample_rate,
+                output_sample_rate=self.synthesizer_config.sampling_rate,
+                output_encoding=self.synthesizer_config.audio_encoding,
+                output_sample_width=2,
+            )
+
+        if self.synthesizer_config.should_encode_as_wav:
+
+            def chunk_transform(chunk):
+                return encode_as_wav(chunk, self.synthesizer_config)
+
+        else:
+
+            def chunk_transform(chunk):
+                return chunk
+
+        async def chunk_generator(output_bytes):
+            for i in range(0, len(output_bytes), chunk_size):
+                if i + chunk_size > len(output_bytes):
+                    yield SynthesisResult.ChunkResult(
+                        chunk_transform(output_bytes[i:]), True
+                    )
+                else:
+                    yield SynthesisResult.ChunkResult(
+                        chunk_transform(output_bytes[i : i + chunk_size]), False
+                    )
+
+        return SynthesisResult(
+            chunk_generator(output_bytes),
+            lambda seconds: self.get_message_cutoff_from_total_response_length(
+                message, seconds, len(output_bytes)
+            ),
+        )
+
     async def create_speech(
         self,
         message: BaseMessage,
@@ -300,6 +365,9 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         else:
             audio_data = await response.read()
             create_speech_span.end()
+            convert_span = tracer.start_span(
+                f"synthesizer.{type_str}.convert",
+            )
             if self.internal_audio_format not in MP3_OUTPUT_FORMATS:
                 input_sample_rate = SAMPLING_RATES[self.internal_audio_format]
                 result = self.create_synthesis_result_from_raw(
@@ -308,20 +376,16 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
                     message=message,
                     chunk_size=chunk_size,
                 )
-                return result
+            else:
+                # Decode mp3 to wav
+                output_bytes_io = decode_mp3(audio_data)
 
-            convert_span = tracer.start_span(
-                f"synthesizer.{type_str}.convert",
-            )
-            # Decode mp3 to wav
-            output_bytes_io = decode_mp3(audio_data)
-
-            # resample (possibly convert from PCM to mulaw) and return raw data
-            result = self.create_synthesis_result_from_wav(
-                file=output_bytes_io,
-                message=message,
-                chunk_size=chunk_size,
-            )
+                # resample (possibly convert from PCM to mulaw) and return raw data
+                result = self.create_synthesis_result_from_wav(
+                    file=output_bytes_io,
+                    message=message,
+                    chunk_size=chunk_size,
+                )
             convert_span.end()
 
             return result
