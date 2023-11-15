@@ -126,7 +126,7 @@ class ElevenLabsSynthesizerConfig(
     stability: Optional[float]
     similarity_boost: Optional[float]
     model_id: Optional[str]
-    output_format: Optional[ElevenLabsOutputFormat]
+    internal_audio_format: Optional[ElevenLabsOutputFormat]
 
     @validator("voice_id")
     def set_name(cls, voice_id):

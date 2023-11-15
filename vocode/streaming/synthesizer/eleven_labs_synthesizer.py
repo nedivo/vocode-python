@@ -110,7 +110,7 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         self.optimize_streaming_latency = synthesizer_config.optimize_streaming_latency
         self.words_per_minute = 150
         self.experimental_streaming = synthesizer_config.experimental_streaming
-        self.output_format = synthesizer_config.output_format
+        self.internal_audio_format = synthesizer_config.internal_audio_format
         self.logger = logger or logging.getLogger(__name__)
 
     async def experimental_streaming_output_generator(
@@ -243,8 +243,8 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         if self.experimental_streaming:
             url_parts["path"] += "/stream"
 
-        if self.output_format:
-            url_parts["query"]["output_format"] = self.output_format.value
+        if self.internal_audio_format:
+            url_parts["query"]["output_format"] = self.internal_audio_format.value
 
         if self.optimize_streaming_latency:
             url_parts["query"][
@@ -262,8 +262,8 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         if self.model_id:
             body["model_id"] = self.model_id
 
+        self.logger.debug("url = %s; body = %s", url, body)
         session = self.aiohttp_session
-
         response = await session.request(
             "POST",
             url,
@@ -300,15 +300,15 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
         else:
             audio_data = await response.read()
             create_speech_span.end()
-            if self.output_format not in MP3_OUTPUT_FORMATS:
-                input_sample_rate = SAMPLING_RATES[self.eleven_labs_output_format]
+            if self.internal_audio_format not in MP3_OUTPUT_FORMATS:
+                input_sample_rate = SAMPLING_RATES[self.internal_audio_format]
                 result = self.create_synthesis_result_from_raw(
                     raw_bytes=audio_data,
-                    input_sampling_rate=input_sample_rate,
+                    input_sample_rate=input_sample_rate,
                     message=message,
                     chunk_size=chunk_size,
                 )
-                return
+                return result
 
             convert_span = tracer.start_span(
                 f"synthesizer.{type_str}.convert",
