@@ -126,7 +126,9 @@ class ElevenLabsSynthesizerConfig(
     stability: Optional[float]
     similarity_boost: Optional[float]
     model_id: Optional[str]
-    internal_audio_format: Optional[ElevenLabsOutputFormat]
+    internal_audio_format: Optional[
+        ElevenLabsOutputFormat
+    ] = ElevenLabsOutputFormat.MULAW_8000Hz
 
     @validator("voice_id")
     def set_name(cls, voice_id):
