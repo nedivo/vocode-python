@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Optional
+
 from vocode.streaming.models.model import TypedModel
 
 
@@ -8,6 +9,7 @@ class Sender(str, Enum):
     BOT = "bot"
     ACTION_WORKER = "action_worker"
     VECTOR_DB = "vector_db"
+    ELEPHANT_RIDER = "guidance"
 
 
 class EventType(str, Enum):

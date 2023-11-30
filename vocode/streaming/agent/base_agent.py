@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-from enum import Enum
 import json
 import logging
 import random
+import typing
+from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     AsyncGenerator,
-    Generator,
     Generic,
     Optional,
     Tuple,
     TypeVar,
     Union,
-    TYPE_CHECKING,
 )
-import typing
+
 from opentelemetry import trace
-from opentelemetry.trace import Span
+
 from vocode.streaming.action.factory import ActionFactory
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
@@ -28,20 +28,18 @@ from vocode.streaming.models.actions import (
     ActionInput,
     ActionOutput,
     FunctionCall,
-    FunctionFragment,
 )
-
 from vocode.streaming.models.agent import (
     AgentConfig,
     ChatGPTAgentConfig,
     LLMAgentConfig,
 )
 from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.models.model import BaseModel, TypedModel
+from vocode.streaming.models.model import TypedModel
+from vocode.streaming.models.transcript import Transcript
 from vocode.streaming.transcriber.base_transcriber import Transcription
 from vocode.streaming.utils import remove_non_letters_digits
 from vocode.streaming.utils.goodbye_model import GoodbyeModel
-from vocode.streaming.models.transcript import Transcript
 from vocode.streaming.utils.worker import (
     InterruptibleAgentResponseEvent,
     InterruptibleEvent,
@@ -60,6 +58,7 @@ class AgentInputType(str, Enum):
     BASE = "agent_input_base"
     TRANSCRIPTION = "agent_input_transcription"
     ACTION_RESULT = "agent_input_action_result"
+    ELEPHANT_RIDER = "agent_input_guidance"
 
 
 class AgentInput(TypedModel, type=AgentInputType.BASE.value):
@@ -76,6 +75,10 @@ class ActionResultAgentInput(AgentInput, type=AgentInputType.ACTION_RESULT.value
     action_input: ActionInput
     action_output: ActionOutput
     is_quiet: bool = False
+
+
+class RiderAgentInput(AgentInput, type=AgentInputType.ELEPHANT_RIDER):
+    message: str
 
 
 class AgentResponseType(str, Enum):
